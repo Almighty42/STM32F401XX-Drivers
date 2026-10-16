@@ -1,6 +1,8 @@
 #ifndef STM32F401RE_HEADER
 #define STM32F401RE_HEADER
 
+// TODO: Change the helper macros
+
 #include <stdint.h>
 #include <stddef.h>
 

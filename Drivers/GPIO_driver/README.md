@@ -3,20 +3,19 @@
 A simple GPIO driver for the STM32F401xx series of microcontrollers, tested on the
 STM32F401RE. This driver acts as a simple HAL-style API over the GPIO pins, allowing easier configuration and control.
 
-### Driver APIs
+## Driver APIs
 - GPIO peripheral initialize / de-initialize functions
 - Simple data read / write / toggle
 - Lock GPIO configuration pin ( preventing it from being changed )
 - IRQ configuration / ISR handling
-- Application event callback
 
-### Also included:
+## Also included:
 - Configuration structures
 - Handle structures
 - Application states / events
 - Return status codes
 
-## Usage example
+### Usage example
 
 ```c
 
@@ -62,6 +61,3 @@ void EXTI15_10_IRQHandler(void)
 
 
 ```
-
-## TODOs:
-- Add driver map
