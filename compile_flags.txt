@@ -1,0 +1,8 @@
+-xc
+-std=gnu11
+--target=arm-none-eabi
+-mcpu=cortex-m4
+-mthumb
+-IGeneric
+-IDrivers/Generic
+-IDrivers/GPIO_driver

@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "../Generic/stm32f401xx.h"
+#include "stm32f401xx.h"
 
 /**
  * @file stm32f401xx_GPIO_driver.h
@@ -138,8 +138,8 @@ typedef enum {
     GPIO_ERR_INVALID_TRIGGER = 9,  /**< Trigger out of range, or used on a non-input pin. */
     GPIO_ERR_EXTI_LINE_BUSY  = 10, /**< EXTI line already routed to another port. */
     GPIO_ERR_EXTI_NOT_SINGLE = 11, /**< EXTI needs exactly one pin in the mask. */
-    GPIO_ERR_PIN_LOCKED      = 12, /**< Cannot deinit because pin is locked. */
-    GPIO_ERR_LOCK_FAILED     = 13  /**< LCKR lock sequence did not complete. */
+    GPIO_ERR_PIN_LOCKED      = 12, /**< A selected pin is locked until reset. */
+    GPIO_ERR_LOCK_FAILED     = 13  /**< Lock sequence failed or cannot be applied. */
 } GPIO_status_t;
 
 /** Configuration applied to every pin selected in @c pins. */
@@ -196,6 +196,7 @@ GPIO_status_t GPIO_peri_clk_control(GPIO_TypeDef *port, bool enable);
  * @retval GPIO_ERR_INVALID_TRIGGER Trigger invalid, or set on a non-input pin.
  * @retval GPIO_ERR_EXTI_NOT_SINGLE Trigger set with more than one pin.
  * @retval GPIO_ERR_EXTI_LINE_BUSY  EXTI line already routed to another port.
+ * @retval GPIO_ERR_PIN_LOCKED      A selected pin is locked until reset.
  * @pre  Not called from an ISR that also configures the same port.
  * @note Configuration is read-modify-write on several registers and is not
  *       safe against concurrent configuration of the same port.

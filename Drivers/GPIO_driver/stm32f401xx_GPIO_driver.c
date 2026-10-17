@@ -5,16 +5,27 @@
  */
 
 #include "stm32f401xx_GPIO_driver.h"
+#include "stm32f401xx_GPIO_regs.h"
+#include <stddef.h>
 #include <stdint.h>
-#include <sys/types.h>
 
-/* ---- Internal helpers ------------------------------------------------ */
+/* ---- Private data ---------------------------------------------------- */
+
+/* One callback slot per EXTI line (line n = pin n of whichever port owns it).
+ * Fields are volatile because an ISR reads them. Lives in .bss, so it is
+ * NULL until the startup code has zeroed .bss. */
+typedef struct
+{
+	volatile GPIO_exti_callback_t cb;
+	void* volatile ctx;
+} gpio_exti_slot_t;
+
+static gpio_exti_slot_t gpio_exti_slots[GPIO_PINS_PER_PORT];
 
 #define GPIO_PORT_COUNT 6U
 
-/* GPIO register reset values from RM0368. Only ports A and B differ from 0.
- * Order matches gpio_ports[]: A, B, C, D, E, H. OTYPER, ODR, AFRL, AFRH
- * and LCKR all reset to 0. */
+/* Reset values from RM0368; only ports A and B differ from 0. OTYPER, ODR,
+ * AFRL, AFRH and LCKR reset to 0. Order matches gpio_ports[]. */
 typedef struct
 {
 	uint32_t moder;
@@ -24,22 +35,22 @@ typedef struct
 
 static const gpio_reset_vals_t gpio_reset_vals[GPIO_PORT_COUNT] = {
     {0xA8000000U, 0x0C000000U, 0x64000000U}, /* A: PA13..PA15 SWD/JTAG */
-    {0x00000280U, 0x000000C0U, 0x00000100U}, /* B: PB3, PB4 JTAG        */
+    {0x00000280U, 0x000000C0U, 0x00000100U}, /* B: PB3, PB4 JTAG       */
     {0U, 0U, 0U},                            /* C */
     {0U, 0U, 0U},                            /* D */
     {0U, 0U, 0U},                            /* E */
     {0U, 0U, 0U},                            /* H */
 };
 
-/* Port order matches the AHB1ENR/AHB1RSTR bit positions: A..E = 0..4, H = 7. */
+/* Port order matches the AHB1ENR/AHB1RSTR bit positions: A..E = 0..4, H = 7.
+ * The same number is the EXTICR port code. */
 static GPIO_TypeDef* const gpio_ports[GPIO_PORT_COUNT] = {GPIOA, GPIOB, GPIOC,
                                                           GPIOD, GPIOE, GPIOH};
 static const uint8_t gpio_ahb1_bit[GPIO_PORT_COUNT] = {0U, 1U, 2U, 3U, 4U, 7U};
 
-/**
- * @brief Map a GPIO port pointer to its index in gpio_ports[].
- * @return Index 0..5, or -1 if @p port is not GPIOA..GPIOE or GPIOH.
- */
+/* ---- Private: port lookup -------------------------------------------- */
+
+/** Index of @p port in gpio_ports[], or -1 if it is not a valid port. */
 static int gpio_port_index(const GPIO_TypeDef* port)
 {
 	for (size_t i = 0U; i < GPIO_PORT_COUNT; i++) {
@@ -50,63 +61,222 @@ static int gpio_port_index(const GPIO_TypeDef* port)
 	return -1;
 }
 
-/** True if the EXTI line is unmasked; *port_code is the port it routes to. */
-static bool gpio_exti_line_routed(uint32_t line, uint32_t* port_code)
+/* ---- Private: per-pin register fields -------------------------------- */
+
+static inline void gpio_set_mode(GPIO_TypeDef* port, uint32_t n, uint32_t v)
 {
-	if (!IS_BIT_SET(EXTI->IMR, line)) {
-		return false;
-	}
-	*port_code = (SYSCFG->EXTICR[line / 4U] >> ((line % 4U) * 4U)) & 0xFU;
-	return true;
+	reg_set_field(&port->MODER, GPIO_MODER_MASK(n), v);
 }
 
-/** Route and configure one EXTI line, or release it with GPIO_TRIG_NONE. */
-static void gpio_exti_configure(uint32_t line, uint32_t port_code,
-                                GPIO_trigger_t trig)
+static inline void gpio_set_speed(GPIO_TypeDef* port, uint32_t n, uint32_t v)
+{
+	reg_set_field(&port->OSPEEDR, GPIO_OSPEEDR_MASK(n), v);
+}
+
+static inline void gpio_set_pull(GPIO_TypeDef* port, uint32_t n, uint32_t v)
+{
+	reg_set_field(&port->PUPDR, GPIO_PUPDR_MASK(n), v);
+}
+
+static inline void gpio_set_otype(GPIO_TypeDef* port, uint32_t n, uint32_t v)
+{
+	reg_set_field(&port->OTYPER, GPIO_OTYPER_MASK(n), v);
+}
+
+static inline void gpio_set_af(GPIO_TypeDef* port, uint32_t n, uint32_t v)
+{
+	volatile uint32_t* afr = (n < 8U) ? &port->AFRL : &port->AFRH;
+	reg_set_field(afr, GPIO_AFR_MASK(n), v);
+}
+
+/** True if any of @p pins is locked. */
+static inline bool gpio_pins_locked(const GPIO_TypeDef* port, uint32_t pins)
+{
+	return (FIELD_GET(GPIO_LCKR_LCK_MASK, port->LCKR) & pins) != 0U;
+}
+
+/** Return pin @p n to its reset state. The mode is written last. */
+static void gpio_reset_pin(GPIO_TypeDef* port, uint32_t n,
+                           const gpio_reset_vals_t* rv)
+{
+	gpio_set_af(port, n, 0U);
+	gpio_set_otype(port, n, 0U);
+	reg_modify(&port->OSPEEDR, GPIO_OSPEEDR_MASK(n), rv->ospeedr);
+	reg_modify(&port->PUPDR, GPIO_PUPDR_MASK(n), rv->pupdr);
+	reg_modify(&port->MODER, GPIO_MODER_MASK(n), rv->moder);
+}
+
+/* ---- Private: EXTI building blocks ----------------------------------- */
+
+static inline void exti_mask(uint32_t line)
 {
 	CLEAR_BIT(EXTI->IMR, line);
+}
+static inline void exti_unmask(uint32_t line)
+{
+	SET_BIT(EXTI->IMR, line);
+}
+
+static inline void exti_clear_pending(uint32_t line)
+{
+	EXTI->PR = BIT(line); /* write 1 to clear */
+}
+
+static inline void exti_disable_edges(uint32_t line)
+{
 	CLEAR_BIT(EXTI->RTSR, line);
 	CLEAR_BIT(EXTI->FTSR, line);
+}
 
-	if (trig != GPIO_TRIG_NONE) {
-		SYSCFG_PCLK_EN();
-		MODIFY_FIELD(SYSCFG->EXTICR[line / 4U], 4U, (line % 4U) * 4U,
-		             port_code);
-		if (trig == GPIO_TRIG_RISING || trig == GPIO_TRIG_BOTH) {
-			SET_BIT(EXTI->RTSR, line);
-		}
-		if (trig == GPIO_TRIG_FALLING || trig == GPIO_TRIG_BOTH) {
-			SET_BIT(EXTI->FTSR, line);
-		}
+static inline void exti_enable_edges(uint32_t line, GPIO_trigger_t trig)
+{
+	if (trig == GPIO_TRIG_RISING || trig == GPIO_TRIG_BOTH) {
+		SET_BIT(EXTI->RTSR, line);
 	}
-	EXTI->PR = 1U << line;
-	if (trig != GPIO_TRIG_NONE) {
-		SET_BIT(EXTI->IMR, line);
+	if (trig == GPIO_TRIG_FALLING || trig == GPIO_TRIG_BOTH) {
+		SET_BIT(EXTI->FTSR, line);
 	}
 }
 
-/** Release every EXTI line in @p pins that is currently owned by this port. */
+static inline void exti_route(uint32_t line, uint32_t port_code)
+{
+	SYSCFG_PCLK_EN();
+	reg_set_field(&SYSCFG->EXTICR[line / 4U], EXTICR_MASK(line), port_code);
+}
+
+static inline uint32_t exti_routed_port(uint32_t line)
+{
+	return FIELD_GET(EXTICR_MASK(line), SYSCFG->EXTICR[line / 4U]);
+}
+
+/** A line is in use if it is unmasked or has an edge enabled. */
+static inline bool exti_line_in_use(uint32_t line)
+{
+	return ((EXTI->IMR | EXTI->RTSR | EXTI->FTSR) & BIT(line)) != 0U;
+}
+
+static inline bool exti_owned_by(uint32_t line, uint32_t port_code)
+{
+	return exti_line_in_use(line) && exti_routed_port(line) == port_code;
+}
+
+static inline bool exti_owned_by_other(uint32_t line, uint32_t port_code)
+{
+	return exti_line_in_use(line) && exti_routed_port(line) != port_code;
+}
+
+/* ---- Private: GPIO + EXTI operations --------------------------------- */
+
+/** Route line to the port, set the edges, clear any stale edge, then unmask. */
+static void gpio_exti_arm(uint32_t line, uint32_t port_code,
+                          GPIO_trigger_t trig)
+{
+	exti_mask(line); /* silent while reconfiguring */
+	exti_disable_edges(line);
+	exti_route(line, port_code);
+	exti_enable_edges(line, trig);
+	exti_clear_pending(line); /* an edge may have fired during setup */
+	exti_unmask(line);
+}
+
+static void gpio_exti_disarm(uint32_t line)
+{
+	exti_mask(line);
+	exti_disable_edges(line);
+	exti_clear_pending(line);
+}
+
+/** Disarm every line in @p pins that is owned by this port. */
 static void gpio_exti_release(uint32_t pins, uint32_t port_code)
 {
-	for (uint32_t n = 0U; n < 16U; n++) {
-		uint32_t routed;
-		if ((pins & (1U << n)) != 0U &&
-		    gpio_exti_line_routed(n, &routed) && routed == port_code) {
-			gpio_exti_configure(n, port_code, GPIO_TRIG_NONE);
+	for (uint32_t n = 0U; n < GPIO_PINS_PER_PORT; n++) {
+		if (mask_has_bit(pins, n) && exti_owned_by(n, port_code)) {
+			gpio_exti_disarm(n);
 		}
+	}
+}
+
+/* ---- Private: validation --------------------------------------------- */
+
+static inline bool gpio_in_range(uint32_t value, uint32_t max)
+{
+	return value <= max;
+}
+
+/** Check every field of @p cfg. Touches no register. */
+static GPIO_status_t gpio_validate_config(const GPIO_config_t* cfg)
+{
+	if (cfg->pins == 0U) {
+		return GPIO_ERR_INVALID_PINS;
+	}
+	if (!gpio_in_range((uint32_t)cfg->mode, GPIO_MODE_ANALOG)) {
+		return GPIO_ERR_INVALID_MODE;
+	}
+	if (!gpio_in_range((uint32_t)cfg->otype, GPIO_OTYPE_OPEN_DRAIN)) {
+		return GPIO_ERR_INVALID_OTYPE;
+	}
+	if (!gpio_in_range((uint32_t)cfg->speed, GPIO_SPEED_HIGH)) {
+		return GPIO_ERR_INVALID_SPEED;
+	}
+	if (!gpio_in_range((uint32_t)cfg->pull, GPIO_PULL_DOWN)) {
+		return GPIO_ERR_INVALID_PULL;
+	}
+	if (cfg->mode == GPIO_MODE_AF &&
+	    !gpio_in_range((uint32_t)cfg->af, 15U)) {
+		return GPIO_ERR_INVALID_AF; /* also rejects GPIO_AF_NONE */
+	}
+	if (!gpio_in_range((uint32_t)cfg->trigger, GPIO_TRIG_BOTH)) {
+		return GPIO_ERR_INVALID_TRIGGER;
+	}
+	return GPIO_OK;
+}
+
+/** Check the EXTI-specific rules of @p cfg. Touches no register. */
+static GPIO_status_t gpio_validate_exti(const GPIO_config_t* cfg,
+                                        uint32_t port_code)
+{
+	if (cfg->trigger == GPIO_TRIG_NONE) {
+		return GPIO_OK;
+	}
+	if (cfg->mode != GPIO_MODE_INPUT) {
+		return GPIO_ERR_INVALID_TRIGGER;
+	}
+	if (!mask_is_single_bit(cfg->pins)) {
+		return GPIO_ERR_EXTI_NOT_SINGLE;
+	}
+	if (exti_owned_by_other(mask_lowest_bit_index(cfg->pins), port_code)) {
+		return GPIO_ERR_EXTI_LINE_BUSY;
+	}
+	return GPIO_OK;
+}
+
+/** Apply @p cfg to pin @p n. The mode is written last. */
+static void gpio_apply_pin(GPIO_TypeDef* port, uint32_t n, uint32_t port_code,
+                           const GPIO_config_t* cfg)
+{
+	if (cfg->mode == GPIO_MODE_OUTPUT || cfg->mode == GPIO_MODE_AF) {
+		gpio_set_otype(port, n, (uint32_t)cfg->otype);
+		gpio_set_speed(port, n, (uint32_t)cfg->speed);
+	}
+	gpio_set_pull(port, n, (uint32_t)cfg->pull);
+
+	if (cfg->mode == GPIO_MODE_AF) {
+		gpio_set_af(port, n, (uint32_t)cfg->af);
+	}
+	gpio_set_mode(port, n, (uint32_t)cfg->mode);
+
+	if (cfg->trigger != GPIO_TRIG_NONE) {
+		gpio_exti_arm(n, port_code, cfg->trigger);
+	}
+	else if (exti_owned_by(n, port_code)) {
+		gpio_exti_disarm(n);
 	}
 }
 
 /* ---- Clock and initialisation ---------------------------------------- */
 
-/* ---- GPIO_peri_clk_control ------------------------------------------- */
-
-/*
- * Reading AHB1ENR back after enabling gives the peripheral clock time to
- * start before the first register access. Check the STM32F401 errata sheet
- * for the exact wording of that requirement.
- */
-
+/* Reading AHB1ENR back after enabling gives the clock time to start. Check
+ * the STM32F401 errata sheet for the exact wording of that requirement. */
 GPIO_status_t GPIO_peri_clk_control(GPIO_TypeDef* port, bool enable)
 {
 	const int idx = gpio_port_index(port);
@@ -123,11 +293,8 @@ GPIO_status_t GPIO_peri_clk_control(GPIO_TypeDef* port, bool enable)
 	return GPIO_OK;
 }
 
-/* ---- GPIO_init ------------------------------------------------------- */
-
 GPIO_status_t GPIO_init(GPIO_TypeDef* port, const GPIO_config_t* cfg)
 {
-	// Validation
 	if (port == NULL || cfg == NULL) {
 		return GPIO_ERR_NULL_PTR;
 	}
@@ -136,96 +303,38 @@ GPIO_status_t GPIO_init(GPIO_TypeDef* port, const GPIO_config_t* cfg)
 		return GPIO_ERR_INVALID_PORT;
 	}
 
-	const uint32_t pins = cfg->pins;
-	if (pins == 0U) {
-		return GPIO_ERR_INVALID_PINS;
+	GPIO_status_t status = gpio_validate_config(cfg);
+	if (status != GPIO_OK) {
+		return status;
 	}
-	if ((uint32_t)cfg->mode > (uint32_t)GPIO_MODE_ANALOG) {
-		return GPIO_ERR_INVALID_MODE;
-	}
-	if ((uint32_t)cfg->otype > (uint32_t)GPIO_OTYPE_OPEN_DRAIN) {
-		return GPIO_ERR_INVALID_OTYPE;
-	}
-	if ((uint32_t)cfg->speed > (uint32_t)GPIO_SPEED_HIGH) {
-		return GPIO_ERR_INVALID_SPEED;
-	}
-	if ((uint32_t)cfg->pull > (uint32_t)GPIO_PULL_DOWN) {
-		return GPIO_ERR_INVALID_PULL;
-	}
-	if (cfg->mode == GPIO_MODE_AF && (uint32_t)cfg->af > 15U) {
-		return GPIO_ERR_INVALID_AF; /* also rejects GPIO_AF_NONE */
-	}
-	if ((uint32_t)cfg->trigger > (uint32_t)GPIO_TRIG_BOTH) {
-		return GPIO_ERR_INVALID_TRIGGER;
-	}
-
-	/* EXTI line n on port P: port code equals the AHB1 bit (A..E = 0..4, H
-	 * = 7). */
 	const uint32_t port_code = gpio_ahb1_bit[idx];
-
-	if (cfg->trigger != GPIO_TRIG_NONE) {
-		if (cfg->mode != GPIO_MODE_INPUT) {
-			return GPIO_ERR_INVALID_TRIGGER;
-		}
-		if ((pins & (pins - 1U)) != 0U) {
-			return GPIO_ERR_EXTI_NOT_SINGLE;
-		}
-		uint32_t routed;
-		if (gpio_exti_line_routed((uint32_t)__builtin_ctz(pins),
-		                          &routed) &&
-		    routed != port_code) {
-			return GPIO_ERR_EXTI_LINE_BUSY;
-		}
+	status = gpio_validate_exti(cfg, port_code);
+	if (status != GPIO_OK) {
+		return status;
 	}
 
-	(void)GPIO_peri_clk_control(port, true);
-
-	for (uint32_t n = 0U; n < 16U; n++) {
-		if ((pins & (1U << n)) == 0U) {
-			continue;
-		}
-
-		if (cfg->mode == GPIO_MODE_OUTPUT ||
-		    cfg->mode == GPIO_MODE_AF) {
-			MODIFY_FIELD(port->OTYPER, 1U, n, cfg->otype);
-			MODIFY_FIELD(port->OSPEEDR, 2U, n * 2U, cfg->speed);
-		}
-		MODIFY_FIELD(port->PUPDR, 2U, n * 2U, cfg->pull);
-
-		if (cfg->mode == GPIO_MODE_AF) {
-			volatile uint32_t* afr =
-			    (n < 8U) ? &port->AFRL : &port->AFRH;
-			MODIFY_FIELD(*afr, 4U, (n % 8U) * 4U, cfg->af);
-		}
-		MODIFY_FIELD(port->MODER, 2U, n * 2U, cfg->mode);
-
-		uint32_t routed;
-		if (cfg->trigger != GPIO_TRIG_NONE) {
-			gpio_exti_configure(n, port_code, cfg->trigger);
-		}
-		else if (gpio_exti_line_routed(n, &routed) &&
-		         routed == port_code) {
-			gpio_exti_configure(n, port_code, GPIO_TRIG_NONE);
-		}
+	(void)GPIO_peri_clk_control(port, true); /* registers need the clock */
+	if (gpio_pins_locked(port, cfg->pins)) {
+		return GPIO_ERR_PIN_LOCKED;
 	}
 
+	for (uint32_t n = 0U; n < GPIO_PINS_PER_PORT; n++) {
+		if (mask_has_bit(cfg->pins, n)) {
+			gpio_apply_pin(port, n, port_code, cfg);
+		}
+	}
 	return GPIO_OK;
 }
 
-/* ---- GPIO_pin_deinit ------------------------------------------------- */
+/* ---- De-initialisation ----------------------------------------------- */
 
-/*
- * Order: release EXTI first so no edge fires during teardown, then restore
- * type/speed/pull/AF, then MODER, then clear the output latch. Pins locked
- * with GPIO_lock_pins() ignore these writes until the next reset.
- */
-
+/* Order: release EXTI, restore each pin (mode last), clear the output latch.
+ * Locked pins are rejected up front, so a failed call changes nothing. */
 GPIO_status_t GPIO_pin_deinit(GPIO_TypeDef* port, uint16_t pins)
 {
 	if (port == NULL) {
 		return GPIO_ERR_NULL_PTR;
 	}
-
 	const int idx = gpio_port_index(port);
 	if (idx < 0) {
 		return GPIO_ERR_INVALID_PORT;
@@ -234,23 +343,18 @@ GPIO_status_t GPIO_pin_deinit(GPIO_TypeDef* port, uint16_t pins)
 		return GPIO_ERR_INVALID_PINS;
 	}
 
-	const gpio_reset_vals_t* rv = &gpio_reset_vals[idx];
-	gpio_exti_release(pins, gpio_ahb1_bit[idx]);
-
-	for (uint32_t n = 0U; n < 16U; n++) {
-		if ((pins & (1U << n)) == 0U) {
-			continue;
-		}
-		const uint32_t sh2 = n * 2U;
-		volatile uint32_t* afr = (n < 8U) ? &port->AFRL : &port->AFRH;
-		MODIFY_FIELD(*afr, 4U, (n % 8U) * 4U, 0U);
-		MODIFY_FIELD(port->OTYPER, 1U, n, 0U);
-		MODIFY_FIELD(port->OSPEEDR, 2U, sh2, rv->ospeedr >> sh2);
-		MODIFY_FIELD(port->PUPDR, 1U, sh2, rv->pupdr >> sh2);
-		MODIFY_FIELD(port->MODER, 1U, sh2, rv->moder >> sh2);
+	(void)GPIO_peri_clk_control(port, true);
+	if (gpio_pins_locked(port, pins)) {
+		return GPIO_ERR_PIN_LOCKED;
 	}
 
-	port->BSRR = (uint32_t)pins << 16U;
+	gpio_exti_release(pins, gpio_ahb1_bit[idx]);
+	for (uint32_t n = 0U; n < GPIO_PINS_PER_PORT; n++) {
+		if (mask_has_bit(pins, n)) {
+			gpio_reset_pin(port, n, &gpio_reset_vals[idx]);
+		}
+	}
+	port->BSRR = GPIO_BSRR_RESET(pins);
 	return GPIO_OK;
 }
 
@@ -259,242 +363,162 @@ GPIO_status_t GPIO_port_deinit(GPIO_TypeDef* port)
 	if (port == NULL) {
 		return GPIO_ERR_NULL_PTR;
 	}
-
 	const int idx = gpio_port_index(port);
 	if (idx < 0) {
 		return GPIO_ERR_INVALID_PORT;
 	}
 
 	gpio_exti_release(GPIO_PIN_ALL, gpio_ahb1_bit[idx]);
-
-	SET_BIT(RCC->AHB1RSTR, gpio_ahb1_bit[idx]);
+	SET_BIT(RCC->AHB1RSTR, gpio_ahb1_bit[idx]); /* pulse the port reset */
 	CLEAR_BIT(RCC->AHB1RSTR, gpio_ahb1_bit[idx]);
-	CLEAR_BIT(RCC->AHB1ENR, gpio_ahb1_bit[idx]);
-
+	CLEAR_BIT(RCC->AHB1ENR, gpio_ahb1_bit[idx]); /* gate the clock */
 	return GPIO_OK;
 }
 
-/********************************************************************************
- * @fn			- GPIO_read_input_pin
- *
- * @brief			- Returns value of a GPIO input pin
- *
- * @param[*p_GPIOx]		- GPIO pin register structure
- * @param[pin_n]		- Pin number
- *
- * @return			- Value of pin
- *
- * @Note			- None
- *******************************************************************************/
+/* ---- Data access ----------------------------------------------------- */
 
-// uint8_t GPIO_read_input_pin(GPIO_TypeDef* p_GPIOx, uint8_t pin_n)
-// {
-// 	return (uint8_t)((p_GPIOx->IDR >> pin_n) & 0x00000001);
-// }
+void GPIO_set(GPIO_TypeDef* port, uint16_t pins)
+{
+	port->BSRR = GPIO_BSRR_SET(pins);
+}
 
-/********************************************************************************
- * @fn			- GPIO_read_input_port
- *
- * @brief			- Returns value of a GPIO input port
- *
- * @param[*p_GPIOx]		- GPIO pin register structure
- *
- * @return			- Value of port
- *
- * @Note			- None
- *******************************************************************************/
+void GPIO_reset(GPIO_TypeDef* port, uint16_t pins)
+{
+	port->BSRR = GPIO_BSRR_RESET(pins);
+}
 
-// uint16_t GPIO_read_input_port(GPIO_TypeDef* p_GPIOx)
-// {
-// 	return (uint16_t)p_GPIOx->IDR;
-// }
+void GPIO_toggle(GPIO_TypeDef* port, uint16_t pins)
+{
+	const uint32_t p = pins;
+	const uint32_t odr = port->ODR;
 
-/********************************************************************************
- * @fn			- GPIO_write_output_pin
- *
- * @brief			- Writes to a GPIO output pin
- *
- * @param[*p_GPIOx]		- GPIO pin register structure
- * @param[pin_n]		- Pin number
- * @param[val]			- Value to write
- *
- * @return			- None
- *
- * @Note			- None
- *******************************************************************************/
+	/* currently high -> reset, currently low -> set */
+	port->BSRR = GPIO_BSRR_RESET(odr & p) | GPIO_BSRR_SET(~odr & p);
+}
 
-// void GPIO_write_output_pin(GPIO_TypeDef* p_GPIOx, uint8_t pin_n, uint8_t val)
-// {
-// 	if (val == GPIO_PIN_SET)
-// 		SET_BIT(p_GPIOx->ODR, pin_n);
-// 	else
-// 		CLEAR_BIT(p_GPIOx->ODR, pin_n);
-// }
+void GPIO_write_pins(GPIO_TypeDef* port, uint16_t mask, uint16_t value)
+{
+	const uint32_t m = mask;
+	const uint32_t v = (uint32_t)value & m;
 
-/********************************************************************************
- * @fn			- GPIO_write_output_port
- *
- * @brief			- Writes to a GPIO output port
- *
- * @param[*p_GPIOx]		- GPIO pin register structure
- * @param[val]		- Value to write
- *
- * @return			- None
- *
- * @Note			- None
- *******************************************************************************/
+	port->BSRR = GPIO_BSRR_SET(v) | GPIO_BSRR_RESET(~v & m);
+}
 
-// void GPIO_write_output_port(GPIO_TypeDef* p_GPIOx, uint8_t val)
-// {
-// 	p_GPIOx->ODR = val;
-// }
+uint16_t GPIO_read_pins(GPIO_TypeDef* port, uint16_t pins)
+{
+	return (uint16_t)(port->IDR & pins);
+}
 
-/********************************************************************************
- * @fn				- GPIO_toggle_output_pin
- *
- * @brief			- Toggles GPIO output pin
- *
- * @param[*p_GPIOx]		- GPIO pin register structure
- * @param[pin_n]		- Pin number
- *
- * @return			- None
- *
- * @Note			- None
- *******************************************************************************/
+uint16_t GPIO_read_output_pins(GPIO_TypeDef* port, uint16_t pins)
+{
+	return (uint16_t)(port->ODR & pins);
+}
 
-// void GPIO_toggle_output_pin(GPIO_TypeDef* p_GPIOx, uint8_t pin_n)
-// {
-// 	TOGGLE_BIT(p_GPIOx->ODR, pin_n);
-// }
+/* ---- EXTI ------------------------------------------------------------ */
 
-/********************************************************************************
- * @fn			- GPIO_irq_interrupt_config
- *
- * @brief			- Configures GPIO IRQ interrupt
- *
- * @param[irq_n]		- IRQ number
- * @param[EN_or_DI]		- ENABLE or DISABLE macros
- *
- * @return			- Success / Failure status of the function
- *
- * @Note			- None
- *******************************************************************************/
+GPIO_status_t GPIO_exti_set_callback(uint16_t pin, GPIO_exti_callback_t cb,
+                                     void* ctx)
+{
+	if (!mask_is_single_bit(pin)) {
+		return GPIO_ERR_EXTI_NOT_SINGLE;
+	}
 
-// GPIO_status_t GPIO_irq_interrupt_config(uint8_t irq_n, uint8_t EN_or_DI)
-// {
-// 	if (EN_or_DI != ENABLE && EN_or_DI != DISABLE)
-// 		return GPIO_ERROR_INVALID_STATE;
-//
-// 	if (irq_n >= 84)
-// 		return GPIO_ERROR_INVALID_IRQ;
-//
-// 	SYSCFG_PCLK_EN();
-//
-// 	if (EN_or_DI == ENABLE) {
-// 		if (irq_n < 32)
-// 			SET_BIT(NVIC->ISER[0], irq_n);
-// 		else if (irq_n >= 32 && irq_n < 64)
-// 			SET_BIT(NVIC->ISER[1], (irq_n % 32));
-// 		else if (irq_n >= 64 && irq_n < 96)
-// 			SET_BIT(NVIC->ISER[2], (irq_n % 64));
-// 	}
-// 	else {
-// 		if (irq_n < 32)
-// 			SET_BIT(NVIC->ICER[0], irq_n);
-// 		else if (irq_n >= 32 && irq_n < 64)
-// 			SET_BIT(NVIC->ICER[1], (irq_n % 32));
-// 		else if (irq_n >= 64 && irq_n < 96)
-// 			SET_BIT(NVIC->ICER[2], (irq_n % 64));
-// 	}
-//
-// 	return GPIO_OK;
-// }
+	gpio_exti_slot_t* slot = &gpio_exti_slots[mask_lowest_bit_index(pin)];
 
-/********************************************************************************
- * @fn			- GPIO_irq_priority_config
- *
- * @brief			- Configures GPIO IRQ priority
- *
- * @param[irq_n]		- IRQ number
- * @param[irq_prio]		- IRQ priority
- *
- * @return			- Success / Failure status of the function
- *
- * @Note			- None
- *******************************************************************************/
+	slot->cb = NULL;
+	slot->ctx = ctx;
+	slot->cb = cb;
+	return GPIO_OK;
+}
 
-// GPIO_status_t GPIO_irq_priority_config(uint8_t irq_n, uint8_t irq_prio)
-// {
-// 	if (irq_n >= 84)
-// 		return GPIO_ERROR_INVALID_IRQ;
-//
-// 	// IPR_n[0-59]
-// 	uint8_t ipr_n = irq_n / 4;
-// 	// IPR_n IP_n[0-4]
-// 	uint8_t ipr_n_section = (irq_n % 4) * 8;
-// 	uint8_t prio_field = (irq_prio & ((1U << __NVIC_PRIO_BITS) - 1U))
-// 	                     << (8U - __NVIC_PRIO_BITS);
-//
-// 	uint32_t ipr = NVIC->IPR[ipr_n];
-// 	CLEAR_BYTE(ipr, ipr_n_section);
-// 	ipr |= (prio_field << ipr_n_section);
-// 	NVIC->IPR[ipr_n] = ipr;
-//
-// 	return GPIO_OK;
-// }
+GPIO_status_t GPIO_exti_enable(uint16_t pin)
+{
+	if (!mask_is_single_bit(pin)) {
+		return GPIO_ERR_EXTI_NOT_SINGLE;
+	}
 
-/********************************************************************************
- * @fn			- GPIO_irq_handling
- *
- * @brief			- Handles GPIO EXTI interrupts
- *
- * @param[pin_n]		- Pin number
- *
- * @return			- None
- *
- * @Note			- None
- *******************************************************************************/
+	const uint32_t line = mask_lowest_bit_index(pin);
 
-// void GPIO_irq_handling(uint8_t pin_n)
-// {
-// 	if (IS_BIT_SET(EXTI->PR, pin_n))
-// 		SET_BIT(EXTI->PR, pin_n);
-// }
+	exti_clear_pending(line);
+	exti_unmask(line);
+	return GPIO_OK;
+}
 
-/********************************************************************************
- * @fn				- GPIO_lock_pin
- *
- * @brief			- Locks GPIO configuration of a port
- *
- * @param[*p_GPIOx]		- Base address of the GPIO peripheral
- * @param[pin_n]		- Pin number
- *
- * @return			- Success / Failure status of the function
- *
- * @Note			- None
- *******************************************************************************/
+GPIO_status_t GPIO_exti_disable(uint16_t pin)
+{
+	if (!mask_is_single_bit(pin)) {
+		return GPIO_ERR_EXTI_NOT_SINGLE;
+	}
 
-// GPIO_status_t GPIO_lock_pin(GPIO_TypeDef* p_GPIOx, uint8_t pin_n)
-// {
-// 	if (p_GPIOx == NULL || (p_GPIOx != GPIOA && p_GPIOx != GPIOB &&
-// 	                           p_GPIOx != GPIOC && p_GPIOx != GPIOD &&
-// 	                           p_GPIOx != GPIOE && p_GPIOx != GPIOH))
-// 		return GPIO_ERROR_INVALID_PORT;
-//
-// 	if (pin_n > 15U)
-// 		return GPIO_ERROR_INVALID_PIN;
-//
-// 	SET_BIT(p_GPIOx->LCKR, pin_n);
-// 	SET_BIT(p_GPIOx->LCKR, 16);
-//
-// 	CLEAR_BIT(p_GPIOx->LCKR, 16);
-//
-// 	SET_BIT(p_GPIOx->LCKR, 16);
-//
-// 	(void)p_GPIOx->LCKR;
-//
-// 	if (!IS_BIT_SET(p_GPIOx->LCKR, 16))
-// 		return GPIO_ERROR_LOCK_FAILED;
-//
-// 	return GPIO_OK;
-// }
+	const uint32_t line = mask_lowest_bit_index(pin);
+
+	exti_mask(line);
+	exti_clear_pending(line);
+	return GPIO_OK;
+}
+
+void GPIO_exti_irq_handler(uint8_t first, uint8_t last)
+{
+	if (first > last || last >= GPIO_PINS_PER_PORT) {
+		return;
+	}
+
+	uint32_t pending = EXTI->PR & EXTI->IMR & GENMASK(last, first);
+	if (pending == 0U) {
+		return;
+	}
+
+	EXTI->PR = pending;
+
+	while (pending != 0U) {
+		const uint32_t line = mask_lowest_bit_index(pending);
+		pending &= pending - 1U;
+
+		const gpio_exti_slot_t* slot = &gpio_exti_slots[line];
+		const GPIO_exti_callback_t cb = slot->cb;
+		void* const ctx = slot->ctx;
+		if (cb != NULL) {
+			cb((uint16_t)BIT(line), ctx);
+		}
+	}
+}
+
+/* ---- GPIO lock ------------------------------------------------------- */
+
+GPIO_status_t GPIO_lock_pins(GPIO_TypeDef* port, uint16_t pins)
+{
+	if (port == NULL) {
+		return GPIO_ERR_NULL_PTR;
+	}
+	if (gpio_port_index(port) < 0) {
+		return GPIO_ERR_INVALID_PORT;
+	}
+	if (pins == 0U) {
+		return GPIO_ERR_INVALID_PINS;
+	}
+
+	(void)GPIO_peri_clk_control(port, true);
+
+	/* Once the key is active, LCKR is frozen until a reset. */
+	const uint32_t lckr = port->LCKR;
+	if ((lckr & GPIO_LCKR_LCKK_MASK) != 0U) {
+		const uint32_t already_locked =
+		    FIELD_GET(GPIO_LCKR_LCK_MASK, lckr);
+		return ((already_locked & pins) == pins) ? GPIO_OK
+		                                         : GPIO_ERR_LOCK_FAILED;
+	}
+
+	/* Lock key write sequence. Always 32-bit writes, and the pin bits
+	 * (LCKR[15:0]) must be identical in all three writes. */
+	const uint32_t lck = pins;
+	port->LCKR = GPIO_LCKR_LCKK_MASK | lck; /* 1. LCKK = 1 */
+	port->LCKR = lck;                       /* 2. LCKK = 0 */
+	port->LCKR = GPIO_LCKR_LCKK_MASK | lck; /* 3. LCKK = 1 */
+	(void)port->LCKR;                       /* read */
+
+	if ((port->LCKR & GPIO_LCKR_LCKK_MASK) == 0U) {
+		return GPIO_ERR_LOCK_FAILED;
+	}
+
+	return GPIO_OK;
+}
