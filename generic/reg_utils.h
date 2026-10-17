@@ -20,6 +20,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* TODO: Deprecated: used by drivers not yet migrated. Delete when unused. */
+#define SET_BITS_BY_VAR(reg, val)   ((reg) |= (val))
+#define CLEAR_BYTE(reg, pos)        ((reg) &= ~((uint32_t)0xFFU << (pos)))
+#define CLEAR_FIELD_2BIT(reg, pos)  ((reg) &= ~((uint32_t)0x3U << (pos)))
+#define CLEAR_FIELD_4BIT(reg, pos)  ((reg) &= ~((uint32_t)0xFU << (pos)))
+
 /* ---- Masks ----------------------------------------------------------- */
 
 /** Mask with only bit @p n set. Uses uint32_t so 64-bit host tests match the target. */

@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "reg_utils.h"
+
 // NOTE: --- Base Addresses --
 
 #define FLASH_BASE_ADDR			0x08000000UL    // Flash
@@ -41,7 +43,7 @@
 
 // Base addresses of peripherals which are hanging on AHB2 bus
 
-#define USB_OTG_FS_BASE_ADDR		AHB1PERIPH_BASE_ADDR    // USB OTG FS
+#define USB_OTG_FS_BASE_ADDR		AHB2PERIPH_BASE_ADDR    // USB OTG FS
 
 // Base addresses of peripherals which are hanging on APB1 bus
 
@@ -84,7 +86,7 @@
 #define __IO				volatile    // Read / Write
 
 #define ENABLE				1
-#define DISABLE				1
+#define DISABLE				0
 #define SET				ENABLE
 #define RESET				DISABLE
 #define GPIO_PIN_SET			SET
@@ -138,7 +140,7 @@
 								if (!found) return (err_code);	\
 							} while(0)	\
 
-#define VALIDATE_IRQ_NUMBER(irq, err_code)	VALIDATE_RANGE((irq), 0U, 83U, err_code)
+#define VALIDATE_IRQ_NUMBER(irq, err_code)	VALIDATE_RANGE((irq), 0U, 84U, err_code)
 
 // NOTE: --- Core Peripheral TypeDefs ---
 
@@ -161,7 +163,7 @@ typedef struct
 	__IO uint32_t ICPR[8];
 	uint32_t res3[24];
 	__I uint32_t IABR[8];
-	uint32_t res4[36];
+	uint32_t res4[56];
 	__IO uint8_t IPR[240];
 	uint32_t res5[644];
 	__O uint32_t STIR;
@@ -510,59 +512,6 @@ typedef struct {
 #define SYSCFG_PCLK_EN()	SET_BIT(RCC->APB2ENR, 14)
 
 #define SYSCFG_PCLK_DI()	CLEAR_BIT(RCC->APB2ENR, 14)
-
-// Macros for reseting GPIOx peripherals
-
-#define GPIOA_PER_RESET()	do{SET_BIT(RCC->APB1RSTR, 0); CLEAR_BIT(RCC->APB1RSTR, 0);} while(0)
-#define GPIOA_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 0); CLEAR_BIT(RCC->APB1ENR, 0);} while(0)
-#define GPIOB_PER_RESET()	do{SET_BIT(RCC->APB1RSTR, 1); CLEAR_BIT(RCC->APB1RSTR, 1);} while(0)
-#define GPIOB_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 1); CLEAR_BIT(RCC->APB1ENR, 1);} while(0)
-#define GPIOC_PER_RESET()	do{SET_BIT(RCC->APB1RSTR, 2); CLEAR_BIT(RCC->APB1RSTR, 2);} while(0)
-#define GPIOC_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 2); CLEAR_BIT(RCC->APB1ENR, 2);} while(0)
-#define GPIOD_PER_RESET()	do{SET_BIT(RCC->APB1RSTR, 3); CLEAR_BIT(RCC->APB1RSTR, 3);} while(0)
-#define GPIOD_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 3); CLEAR_BIT(RCC->APB1ENR, 3);} while(0)
-#define GPIOE_PER_RESET()	do{SET_BIT(RCC->APB1RSTR, 4); CLEAR_BIT(RCC->APB1RSTR, 4);} while(0)
-#define GPIOE_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 4); CLEAR_BIT(RCC->APB1ENR, 4);} while(0)
-#define GPIOH_PER_RESET()	do{SET_BIT(RCC->APB1RSTR,7); CLEAR_BIT(RCC->APB1RSTR, 7);} while(0)
-#define GPIOH_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 7); CLEAR_BIT(RCC->APB1ENR, 7);} while(0)
-
-// Macros for reseting USARTx peripherals
-
-#define USART1_PER_RESET()	do{SET_BIT(RCC->APB2RSTR, 4); CLEAR_BIT(RCC->APB2RSTR, 4);} while(0)
-#define USART1_CLK_DISABLE()	do{SET_BIT(RCC->APB2ENR, 4); CLEAR_BIT(RCC->APB2ENR, 4);} while(0)
-#define USART2_PER_RESET()	do{SET_BIT(RCC->APB1RSTR, 17); CLEAR_BIT(RCC->APB1RSTR, 17);} while(0)
-#define USART2_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 17); CLEAR_BIT(RCC->APB1ENR, 17);} while(0)
-#define USART6_PER_RESET()	do{SET_BIT(RCC->APB2RSTR, 5); CLEAR_BIT(RCC->APB2RSTR, 5);} while(0)
-#define USART6_CLK_DISABLE()	do{SET_BIT(RCC->APB2ENR, 5); CLEAR_BIT(RCC->APB2ENR, 5);} while(0)
-
-// Macros for reseting SPIx peripherals
-
-#define SPI1_PER_RESET()	do{SET_BIT(RCC->APB2RSTR, 12); CLEAR_BIT(RCC->APB2RSTR, 12);} while(0)
-#define SPI1_CLK_DISABLE()	do{SET_BIT(RCC->APB2ENR, 12); CLEAR_BIT(RCC->APB2ENR, 12);} while(0)
-#define SPI2_PER_RESET()	do{SET_BIT(RCC->APB1RSTR, 14); CLEAR_BIT(RCC->APB1RSTR, 14);} while(0)
-#define SPI2_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 17); CLEAR_BIT(RCC->APB1ENR, 17);} while(0)
-#define SPI3_PER_RESET()	do{SET_BIT(RCC->APB1RSTR, 15); CLEAR_BIT(RCC->APB1RSTR, 15);} while(0)
-#define SPI3_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 15); CLEAR_BIT(RCC->APB1ENR, 15);} while(0)
-#define SPI4_PER_RESET()	do{SET_BIT(RCC->APB2RSTR, 13); CLEAR_BIT(RCC->APB2RSTR, 13);} while(0)
-#define SPI4_CLK_DISABLE()	do{SET_BIT(RCC->APB2ENR, 13); CLEAR_BIT(RCC->APB2ENR, 13);} while(0)
-
-// Macros for reseting I2Cx peripherals
-
-#define I2C1_PER_RESET()	do{SET_BIT(RCC->APB1RSTR, 21); CLEAR_BIT(RCC->APB1RSTR, 21);} while(0)
-#define I2C1_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 21); CLEAR_BIT(RCC->APB1ENR, 21);} while(0)
-#define I2C2_PER_RESET()	do{SET_BIT(RCC->APB1RSTR, 22); CLEAR_BIT(RCC->APB1RSTR, 22);} while(0)
-#define I2C2_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 22); CLEAR_BIT(RCC->APB1ENR, 22);} while(0)
-#define I2C3_PER_RESET()	do{SET_BIT(RCC->APB1RSTR, 23); CLEAR_BIT(RCC->APB1RSTR, 23);} while(0)
-#define I2C3_CLK_DISABLE()	do{SET_BIT(RCC->APB1ENR, 23); CLEAR_BIT(RCC->APB1ENR, 23);} while(0)
-
-// NOTE: --- Miscellaneous macros ---
-
-#define GPIO_BASE_ADDR_TO_CODE(x)	((x == GPIOA) ? 0 : \
-					(x == GPIOB) ? 1 : \
-					(x == GPIOC) ? 2 : \
-					(x == GPIOD) ? 3 : \
-					(x == GPIOE) ? 4 : \
-					(x == GPIOH) ? 7 : 0 )
 
 // NOTE: --- Macros for IRQ numbers ---
 
