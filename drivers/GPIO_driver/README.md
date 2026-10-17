@@ -92,7 +92,6 @@ sequenceDiagram
 ## Notes and limits
 
 - The driver does not modify / configure the NVIC.
-- A pin switched to output starts low (there is no initial-level option yet).
 - `GPIO_init` is not safe to call from an ISR on the same port as other code.
 - `GPIO_lock_pins` locks a whole port once: lock every pin you need in a single
   call. Only a reset removes the lock.
