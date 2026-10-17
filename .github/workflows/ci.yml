@@ -14,10 +14,7 @@ jobs:
 
   firmware:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        example: [basic_blink, button_blink]
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
-      - run: make -C examples/${{ matrix.example }}
+      - run: make examples

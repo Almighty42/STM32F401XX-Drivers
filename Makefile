@@ -2,7 +2,7 @@
 
 .DEFAULT_GOAL := help
 
-EXAMPLES     := $(patsubst %/,%,$(wildcard examples/*/))
+EXAMPLES := $(patsubst %/Makefile,%,$(shell find examples -name Makefile))
 FORMAT_FILES := $(shell find drivers generic examples test \
                      \( -name '*.c' -o -name '*.h' \))
 
