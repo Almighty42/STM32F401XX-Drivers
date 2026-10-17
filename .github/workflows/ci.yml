@@ -1,0 +1,23 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - run: make -C test test
+
+  firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example: [basic_blink, button_blink]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
+      - run: make -C examples/${{ matrix.example }}
