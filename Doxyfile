@@ -1,0 +1,15 @@
+PROJECT_NAME           = "STM32F401 Drivers"
+PROJECT_BRIEF          = "Bare-metal drivers for the STM32F401RE"
+OUTPUT_DIRECTORY       = docs/api
+INPUT                  = drivers generic/reg_utils.h README.md
+FILE_PATTERNS          = *.h *.md
+RECURSIVE              = YES
+EXCLUDE_PATTERNS       = */*_regs.h
+EXCLUDE = drivers/I2C_driver drivers/SPI_driver drivers/USART_driver
+USE_MDFILE_AS_MAINPAGE = README.md
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = NO
+GENERATE_LATEX         = NO
+WARN_IF_UNDOCUMENTED   = YES
+WARN_NO_PARAMDOC       = YES
+QUIET                  = YES

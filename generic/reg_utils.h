@@ -20,11 +20,47 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* TODO: Deprecated: used by drivers not yet migrated. Delete when unused. */
+/* TODO: */
+
+/**
+ * @name Deprecated helpers
+ * Used by drivers not yet migrated. Delete when unused.
+ * @{
+ */
+
+/**
+ * @brief OR @p val into @p reg.
+ * @param reg  Register (lvalue).
+ * @param val  Bits to set, already in register position.
+ * @deprecated Use SET_BIT() or reg_modify().
+ */
 #define SET_BITS_BY_VAR(reg, val)   ((reg) |= (val))
+
+/**
+ * @brief Clear the 8-bit field that starts at bit @p pos.
+ * @param reg  Register (lvalue).
+ * @param pos  Bit offset of the field (not a byte index).
+ * @deprecated Use reg_modify() with GENMASK().
+ */
 #define CLEAR_BYTE(reg, pos)        ((reg) &= ~((uint32_t)0xFFU << (pos)))
+
+/**
+ * @brief Clear the 2-bit field that starts at bit @p pos.
+ * @param reg  Register (lvalue).
+ * @param pos  Bit offset of the field, for example 2 * pin for GPIO MODER.
+ * @deprecated Use reg_set_field() with GENMASK().
+ */
 #define CLEAR_FIELD_2BIT(reg, pos)  ((reg) &= ~((uint32_t)0x3U << (pos)))
+
+/**
+ * @brief Clear the 4-bit field that starts at bit @p pos.
+ * @param reg  Register (lvalue).
+ * @param pos  Bit offset of the field, for example 4 * (pin % 8) for GPIO AFR.
+ * @deprecated Use reg_set_field() with GENMASK().
+ */
 #define CLEAR_FIELD_4BIT(reg, pos)  ((reg) &= ~((uint32_t)0xFU << (pos)))
+
+/** @} */
 
 /* ---- Masks ----------------------------------------------------------- */
 
@@ -73,15 +109,44 @@ static inline void reg_set_field(volatile uint32_t* reg, uint32_t mask,
     reg_modify(reg, mask, FIELD_PREP(mask, value));
 }
 
-/* ---- Single-bit helpers ----------------------------------------------
- * Read-modify-write on the whole register. Do NOT use them on registers
- * that act on written 1s (NVIC->ICER, EXTI->PR, GPIO->BSRR): write those
- * directly, for example EXTI->PR = BIT(line).
+/**
+ * @brief Return @p reg masked with bit @p bit.
+ * @param reg  Register or value.
+ * @param bit  Bit index, 0..31.
+ * @return Non-zero if the bit is set. This is the masked value, not 0 or 1.
  */
 #define READ_BIT(reg, bit)    ((reg) & BIT(bit))
+
+/**
+ * @brief Test whether bit @p bit of @p reg is set.
+ * @param reg  Register or value.
+ * @param bit  Bit index, 0..31.
+ * @return true if the bit is set.
+ */
 #define IS_BIT_SET(reg, bit)  (READ_BIT(reg, bit) != 0U)
+
+/**
+ * @brief Set bit @p bit of @p reg (read-modify-write).
+ * @param reg  Register (lvalue).
+ * @param bit  Bit index, 0..31.
+ * @warning Do not use on write-1-to-act registers (EXTI->PR, GPIO->BSRR).
+ */
 #define SET_BIT(reg, bit)     ((reg) |= BIT(bit))
+
+/**
+ * @brief Clear bit @p bit of @p reg (read-modify-write).
+ * @param reg  Register (lvalue).
+ * @param bit  Bit index, 0..31.
+ * @warning Do not use on write-1-to-act registers (EXTI->PR, GPIO->BSRR).
+ */
 #define CLEAR_BIT(reg, bit)   ((reg) &= ~BIT(bit))
+
+/**
+ * @brief Invert bit @p bit of @p reg (read-modify-write).
+ * @param reg  Register (lvalue).
+ * @param bit  Bit index, 0..31.
+ * @warning Not atomic. Do not use on write-1-to-act registers.
+ */
 #define TOGGLE_BIT(reg, bit)  ((reg) ^= BIT(bit))
 
 /* ---- Bit masks used as sets (for example pin masks) ------------------ */
@@ -115,9 +180,13 @@ _Static_assert(FIELD_PREP(GENMASK(5, 4), 3U)     == 0x30U, "FIELD_PREP");
 _Static_assert(FIELD_PREP(GENMASK(5, 4), 7U)     == 0x30U, "FIELD_PREP drops excess bits");
 _Static_assert(FIELD_GET(GENMASK(5, 4), 0x30U)   == 3U,    "FIELD_GET");
 
-/* ---- Migration shim --------------------------------------------------
- * Old (width, pos) form used by the first GPIO rewrite. Remove once no
- * code uses it.
+/**
+ * @brief Set a field given by width and position.
+ * @param reg    Register (lvalue, not a pointer).
+ * @param width  Field width in bits.
+ * @param pos    Bit offset of the field.
+ * @param val    Unshifted field value; excess bits are dropped.
+ * @deprecated Use reg_set_field() with GENMASK().
  */
 #define MODIFY_FIELD(reg, width, pos, val) \
     reg_set_field(&(reg), GENMASK((pos) + (width) - 1U, (pos)), (val))
