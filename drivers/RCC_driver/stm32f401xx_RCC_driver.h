@@ -1,6 +1,7 @@
 #ifndef STM32F401XX_RCC_DRIVER_H
 #define STM32F401XX_RCC_DRIVER_H
 
+#include "stm32f401xx.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -90,13 +91,13 @@ typedef enum {
     RCC_ERR_TIMEOUT           = 6  /**< Oscillator, PLL or clock switch did not become ready. */
 } RCC_status_t;
 
-/** PLL settings. SYSCLK = source / m * n / p. */
+/** PLL settings. VCO = source / m * n; SYSCLK = VCO / p. */
 typedef struct {
     RCC_pll_src_t src; /**< PLL input clock. */
-    uint8_t       m;   /**< Input divider; input to the VCO must be 1 to 2 MHz. */
-    uint16_t      n;   /**< VCO multiplier. */
+    uint8_t       m;   /**< Input divider, 2..63. Source / m must be 1 to 2 MHz. */
+    uint16_t      n;   /**< VCO multiplier, 50..432. VCO must be 192 to 432 MHz. */
     uint8_t       p;   /**< SYSCLK divider: 2, 4, 6 or 8 (the value, not the encoding). */
-    uint8_t       q;   /**< Divider for the 48 MHz domain (USB, SDIO). */
+    uint8_t       q;   /**< 48 MHz domain divider, 2..15. VCO / q must not exceed 75 MHz. */
 } RCC_pll_config_t;
 
 /** Complete clock configuration. */
@@ -113,9 +114,13 @@ typedef struct {
 /**
  * @brief Apply a complete clock configuration.
  *
- * Validates every limit first, then brings the new source up and switches
- * to it in the safe order: flash wait states and caches, oscillator, PLL,
- * switch, wait for the switch, prescalers. Waits are bounded.
+ * Validates every limit first, then runs a fixed sequence: flash wait
+ * states and caches, bus dividers to maximum, oscillator, PLL, switch,
+ * final dividers, final wait states. Waits are bounded by a loop count,
+ * not by time.
+ * @note SYSCLK is either unchanged or HSI on failure (HSI only when the PLL
+ *       was in use). Dividers are restored; flash wait states may stay high.
+ * @pre  Not called from an ISR.
  *
  * @param[in] cfg  Configuration. Not modified.
  * @retval RCC_OK                    Success; the new clock is running.
@@ -145,6 +150,8 @@ uint32_t RCC_get_pclk2_hz(void);
 
 /**
  * @brief Route a clock to the MCO1 pin (PA8).
+ * @note The selected source must already be running. 
+ * Divide the output (e.g. ::RCC_MCO_DIV_5) at high frequencies: the pin cannot output 84 MHz cleanly.
  * @param[in] src  Clock to output.
  * @param[in] div  Output divider.
  * @retval RCC_OK                    Success.

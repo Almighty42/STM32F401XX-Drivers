@@ -110,6 +110,28 @@ static inline void reg_set_field(volatile uint32_t* reg, uint32_t mask,
 }
 
 /**
+ * @brief Poll a register until the bits under @p mask equal @p expected.
+ * @param[in] reg       Register to read.
+ * @param[in] mask      Bits to compare.
+ * @param[in] expected  Wanted value of those bits, in register position.
+ * @param[in] loops     Maximum number of reads.
+ * @retval true   The condition became true.
+ * @retval false  It did not within @p loops reads.
+ * @note The wait is counted in loops, not time, so its length depends on
+ *       the core clock.
+ */
+static inline bool reg_poll(const volatile uint32_t* reg, uint32_t mask,
+                            uint32_t expected, uint32_t loops)
+{
+	for (uint32_t i = 0U; i < loops; i++) {
+		if ((*reg & mask) == expected) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
  * @brief Return @p reg masked with bit @p bit.
  * @param reg  Register or value.
  * @param bit  Bit index, 0..31.
@@ -168,6 +190,8 @@ static inline uint32_t mask_lowest_bit_index(uint32_t mask)
 {
     return (uint32_t)__builtin_ctz(mask);
 }
+
+
 
 /* ---- Compile-time self-checks ---------------------------------------- */
 
