@@ -1,4 +1,4 @@
 TARGET  := button_blink
 SOURCES := main.c
 DRIVERS := GPIO_driver
-include ../../mk/example.mk
+include ../../../mk/example.mk
