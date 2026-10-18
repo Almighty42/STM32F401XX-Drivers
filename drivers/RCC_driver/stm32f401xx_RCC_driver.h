@@ -130,7 +130,11 @@ typedef struct {
  * @note A failed call leaves the previous clock running. SYSCLK is either 
  * unchanged or HSI on failure (HSI only when the PLL was in use). 
  * Dividers are restored; flash wait states may stay high.
-
+ *
+ * @note The driver never turns off an oscillator or the PLL that it no
+ *       longer uses. After a switch to HSI, a running HSE or PLL stays on
+ *       and keeps drawing current.
+ *
  * @warning Peripherals that derive timing from the clock (SysTick, UART
  *          baud rate, timers) must be reconfigured afterwards.
  */

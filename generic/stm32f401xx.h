@@ -206,7 +206,7 @@ typedef struct
 	__IO uint32_t SR;
 	__IO uint32_t CR;
 	__IO uint32_t OPTCR;
-} FLASH_Type;
+} FLASH_TypeDef;
 #define FLASH ((FLASH_Type*)0x40023C00)
 
 // NOTE: --- Other Peripheral TypeDefs ---

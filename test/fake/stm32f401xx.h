@@ -3,6 +3,8 @@
 
 #include "../../generic/stm32f401xx.h"
 
+extern FLASH_TypeDef fake_flash;
+void fake_hw_step(void); /* emulates hardware ready flags, see test_rcc.c */
 extern GPIO_TypeDef fake_gpio[6];           /* A, B, C, D, E, H */
 extern RCC_TypeDef  fake_rcc;
 extern EXTI_Type    fake_exti;
@@ -26,5 +28,7 @@ extern SYSCFG_Type  fake_syscfg;
 #define RCC     (&fake_rcc)
 #define EXTI    (&fake_exti)
 #define SYSCFG  (&fake_syscfg)
+#undef FLASH
+#define FLASH (&fake_flash)
 
 #endif

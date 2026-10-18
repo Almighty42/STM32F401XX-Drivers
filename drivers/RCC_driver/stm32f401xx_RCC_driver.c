@@ -108,7 +108,7 @@ static RCC_status_t rcc_pll_output(const RCC_pll_config_t* pll, uint32_t src_hz,
 		return RCC_ERR_INVALID_PLL;
 	}
 
-	const uint32_t vco_out = (uint32_t)((uint64_t)src_hz * pll->n / pll->m);
+	const uint32_t vco_out = rcc_pll_vco_hz(src_hz, pll->m, pll->n);
 	if (vco_out < RCC_VCO_MIN_HZ || vco_out > RCC_VCO_MAX_HZ) {
 		return RCC_ERR_INVALID_PLL;
 	}
@@ -320,12 +320,15 @@ static bool rcc_start_clock(const RCC_clock_config_t* cfg)
 	}
 }
 
-/** Restore the dividers saved at the start, then report @p status. */
+/** Cancel any pending switch, restore the saved dividers, report @p status. */
 static RCC_status_t rcc_abort(uint32_t saved_cfgr, RCC_status_t status)
 {
 	const uint32_t mask =
 	    RCC_CFGR_HPRE_MASK | RCC_CFGR_PPRE1_MASK | RCC_CFGR_PPRE2_MASK;
 
+	/* Request the source that is running now (SWS), not the new one. */
+	reg_set_field(&RCC->CFGR, RCC_CFGR_SW_MASK,
+	              FIELD_GET(RCC_CFGR_SWS_MASK, RCC->CFGR));
 	reg_modify(&RCC->CFGR, mask, saved_cfgr);
 	return status;
 }
