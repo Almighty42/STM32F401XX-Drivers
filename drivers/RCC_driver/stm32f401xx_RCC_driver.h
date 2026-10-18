@@ -25,6 +25,8 @@
 #define RCC_SYSCLK_MAX_HZ  84000000U /**< Maximum SYSCLK / HCLK.   */
 #define RCC_APB1_MAX_HZ    42000000U /**< Maximum APB1 clock.      */
 #define RCC_APB2_MAX_HZ    84000000U /**< Maximum APB2 clock.      */
+#define RCC_LSI_HZ 32000U /**< Nominal LSI; the real value varies widely. */
+#define RCC_LSE_HZ 32768U /**< LSE crystal. */
 /** @} */
 
 /** System clock source. */
@@ -165,6 +167,32 @@ uint32_t RCC_get_pclk2_hz(void);
 
  */
 RCC_status_t RCC_mco1_config(RCC_mco1_src_t src, RCC_mco_div_t div);
+
+/**
+ * @brief Start the internal low-speed oscillator and wait until it is ready.
+ * @retval RCC_OK LSI is running.
+ * @retval RCC_ERR_TIMEOUT LSI did not become ready; it is switched off again.
+ * @note The accuracy is poor (see the datasheet), so do not use LSI for timekeeping.
+ */
+RCC_status_t RCC_lsi_enable(void);
+
+/** @brief Stop the LSI. Has no effect while the IWDG is running. */
+void RCC_lsi_disable(void);
+
+/**
+ * @brief Start the external 32.768 kHz oscillator without waiting.
+ * @param[in] bypass true for an external clock on OSC32_IN, false for a crystal.
+ * @note Enables backup domain write access (PWR_CR.DBP). The start-up can
+ * take a long time; poll RCC_lse_ready() with a timeout of your own.
+ * @note The bypass setting is only applied while the LSE is off.
+ */
+void RCC_lse_start(bool bypass);
+
+/** @brief true when the LSE is stable. */
+bool RCC_lse_ready(void);
+
+/** @brief Stop the LSE. */
+void RCC_lse_stop(void);
 
 /** @} */ /* end of rcc_driver */
 

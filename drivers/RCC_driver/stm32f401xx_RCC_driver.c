@@ -337,6 +337,12 @@ static RCC_status_t rcc_abort(uint32_t saved_cfgr, RCC_status_t status)
 	return status;
 }
 
+static void rcc_backup_unlock(void)
+{
+	reg_set_field(&RCC->APB1ENR, RCC_APB1ENR_PWREN, 1U);
+	reg_set_field(&PWR->CR, PWR_CR_DBP, 1U);
+}
+
 /* ---- Clock initialisation -------------------------------------------- */
 
 RCC_status_t RCC_clock_init(const RCC_clock_config_t* cfg)
@@ -440,4 +446,41 @@ RCC_status_t RCC_mco1_config(RCC_mco1_src_t src, RCC_mco_div_t div)
 	           FIELD_PREP(RCC_CFGR_MCO1_MASK, s) |
 	               FIELD_PREP(RCC_CFGR_MCO1PRE_MASK, d));
 	return RCC_OK;
+}
+
+RCC_status_t RCC_lsi_enable(void)
+{
+	reg_set_field(&RCC->CSR, RCC_CSR_LSION, 1U);
+	if (!reg_poll(&RCC->CSR, RCC_CSR_LSIRDY, RCC_CSR_LSIRDY,
+	              RCC_WAIT_LOOPS)) {
+		reg_set_field(&RCC->CSR, RCC_CSR_LSION, 0U);
+		return RCC_ERR_TIMEOUT;
+	}
+	return RCC_OK;
+}
+
+void RCC_lsi_disable(void)
+{
+	reg_set_field(&RCC->CSR, RCC_CSR_LSION, 0U);
+}
+
+void RCC_lse_start(bool bypass)
+{
+	rcc_backup_unlock();
+	/* LSEBYP is writable only while the LSE is off */
+	if (FIELD_GET(RCC_BDCR_LSEON, RCC->BDCR) == 0U) {
+		reg_set_field(&RCC->BDCR, RCC_BDCR_LSEBYP, bypass ? 1U : 0U);
+		reg_set_field(&RCC->BDCR, RCC_BDCR_LSEON, 1U);
+	}
+}
+
+bool RCC_lse_ready(void)
+{
+	return FIELD_GET(RCC_BDCR_LSERDY, RCC->BDCR) != 0U;
+}
+
+void RCC_lse_stop(void)
+{
+	rcc_backup_unlock();
+	reg_set_field(&RCC->BDCR, RCC_BDCR_LSEON, 0U);
 }

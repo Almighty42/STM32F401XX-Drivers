@@ -35,4 +35,19 @@
 #define FLASH_ACR_ICEN          BIT(9)
 #define FLASH_ACR_DCEN          BIT(10)
 
+/* RCC_APB1ENR */
+#define RCC_APB1ENR_PWREN BIT(28)
+
+/* RCC_BDCR (backup domain, write-protected until PWR_CR.DBP is set) */
+#define RCC_BDCR_LSEON BIT(0)
+#define RCC_BDCR_LSERDY BIT(1)
+#define RCC_BDCR_LSEBYP BIT(2)
+
+/* RCC_CSR */
+#define RCC_CSR_LSION BIT(0)
+#define RCC_CSR_LSIRDY BIT(1)
+
+/* PWR_CR */
+#define PWR_CR_DBP BIT(8)
+
 #endif

@@ -15,6 +15,7 @@ extern FLASH_TypeDef fake_flash;
 extern EXTI_Type     fake_exti;
 extern SYSCFG_Type   fake_syscfg;
 extern SYSTICK_TypeDef fake_systick;
+extern PWR_TypeDef fake_pwr;
 
 /* ---- Redirect the real addresses to the fakes ------------------------ */
 
@@ -29,6 +30,7 @@ extern SYSTICK_TypeDef fake_systick;
 #undef EXTI
 #undef SYSCFG
 #undef SYSTICK
+#undef PWR
 
 #define GPIOA   (&fake_gpio[0])
 #define GPIOB   (&fake_gpio[1])
@@ -41,5 +43,6 @@ extern SYSTICK_TypeDef fake_systick;
 #define EXTI    (&fake_exti)
 #define SYSCFG  (&fake_syscfg)
 #define SYSTICK (&fake_systick)
+#define PWR (&fake_pwr)
 
 #endif

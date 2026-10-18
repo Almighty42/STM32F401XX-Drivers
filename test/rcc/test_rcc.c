@@ -6,6 +6,7 @@
 
 RCC_TypeDef fake_rcc;
 FLASH_TypeDef fake_flash;
+PWR_TypeDef fake_pwr;
 
 /* ---- Fake hardware: ready flags follow enable bits, SWS follows SW ---- */
 
@@ -14,6 +15,8 @@ static struct
 	bool hse_dead;     /* HSE never becomes ready */
 	bool pll_dead;     /* PLL never locks */
 	bool switch_stuck; /* SWS never follows SW */
+	bool lsi_dead;     /* LSI never becomes ready */
+	bool lse_dead;     /* LSE crystal does not start */
 } hw;
 
 void fake_hw_step(void)
@@ -31,6 +34,16 @@ void fake_hw_step(void)
 		cr |= RCC_CR_PLLRDY;
 	}
 	fake_rcc.CR = cr;
+
+	fake_rcc.CSR = (fake_rcc.CSR & ~RCC_CSR_LSIRDY) |
+	               (((fake_rcc.CSR & RCC_CSR_LSION) != 0U && !hw.lsi_dead)
+	                    ? RCC_CSR_LSIRDY
+	                    : 0U);
+	fake_rcc.BDCR =
+	    (fake_rcc.BDCR & ~RCC_BDCR_LSERDY) |
+	    (((fake_rcc.BDCR & RCC_BDCR_LSEON) != 0U && !hw.lse_dead)
+	         ? RCC_BDCR_LSERDY
+	         : 0U);
 
 	if (hw.switch_stuck) {
 		return;
@@ -91,6 +104,8 @@ static RCC_clock_config_t cfg_pll_hse_84(void)
 static void power_on_reset(void)
 {
 	memset(&hw, 0, sizeof hw);
+	memset(&fake_flash, 0, sizeof fake_flash);
+	memset(&fake_pwr, 0, sizeof fake_pwr);
 	memset(&fake_rcc, 0, sizeof fake_rcc);
 	memset(&fake_flash, 0, sizeof fake_flash);
 	fake_rcc.CR = RCC_CR_HSION | RCC_CR_HSIRDY;
@@ -531,6 +546,117 @@ static void test_mco1_rejects_bad_values_and_changes_nothing(void)
 	TEST_ASSERT_EQUAL_HEX32(0x1234U, fake_rcc.CFGR);
 }
 
+/* ---- LSI / LSE --------------------------------------------------------- */
+
+static void test_lsi_enable_sets_lsion_and_reports_ready(void)
+{
+	TEST_ASSERT_EQUAL(RCC_OK, RCC_lsi_enable());
+	TEST_ASSERT_BITS_HIGH(RCC_CSR_LSION, fake_rcc.CSR);
+	TEST_ASSERT_BITS_HIGH(RCC_CSR_LSIRDY, fake_rcc.CSR);
+}
+
+static void test_lsi_never_ready_times_out_and_switches_off(void)
+{
+	hw.lsi_dead = true;
+	TEST_ASSERT_EQUAL(RCC_ERR_TIMEOUT, RCC_lsi_enable());
+	TEST_ASSERT_BITS_LOW(RCC_CSR_LSION, fake_rcc.CSR);
+}
+
+static void test_lsi_disable_clears_lsion(void)
+{
+	TEST_ASSERT_EQUAL(RCC_OK, RCC_lsi_enable());
+	RCC_lsi_disable();
+	TEST_ASSERT_BITS_LOW(RCC_CSR_LSION, fake_rcc.CSR);
+	fake_hw_step();
+	TEST_ASSERT_BITS_LOW(RCC_CSR_LSIRDY, fake_rcc.CSR);
+}
+
+static void test_lse_start_unlocks_backup_domain_and_starts(void)
+{
+	RCC_lse_start(false);
+	TEST_ASSERT_BITS_HIGH(RCC_APB1ENR_PWREN, fake_rcc.APB1ENR);
+	TEST_ASSERT_BITS_HIGH(PWR_CR_DBP, fake_pwr.CR);
+	TEST_ASSERT_BITS_HIGH(RCC_BDCR_LSEON, fake_rcc.BDCR);
+	TEST_ASSERT_BITS_LOW(RCC_BDCR_LSEBYP, fake_rcc.BDCR); /* crystal */
+}
+
+static void test_lse_start_bypass_sets_lsebyp(void)
+{
+	RCC_lse_start(true);
+	TEST_ASSERT_BITS_HIGH(RCC_BDCR_LSEON | RCC_BDCR_LSEBYP, fake_rcc.BDCR);
+}
+
+static void test_lse_bypass_is_not_changed_while_running(void)
+{
+	RCC_lse_start(false);
+	RCC_lse_start(true); /* LSEBYP is writable only while LSE is off */
+	TEST_ASSERT_BITS_LOW(RCC_BDCR_LSEBYP, fake_rcc.BDCR);
+
+	RCC_lse_stop();
+	RCC_lse_start(true);
+	RCC_lse_start(false);
+	TEST_ASSERT_BITS_HIGH(RCC_BDCR_LSEBYP, fake_rcc.BDCR);
+}
+
+static void test_lse_ready_only_after_the_hardware_reports_it(void)
+{
+	TEST_ASSERT_FALSE(RCC_lse_ready());
+	RCC_lse_start(false);
+	TEST_ASSERT_FALSE(RCC_lse_ready()); /* start does not wait */
+	fake_hw_step();
+	TEST_ASSERT_TRUE(RCC_lse_ready());
+}
+
+static void test_lse_dead_crystal_never_becomes_ready(void)
+{
+	hw.lse_dead = true;
+	RCC_lse_start(false);
+	fake_hw_step();
+	fake_hw_step();
+	TEST_ASSERT_BITS_HIGH(RCC_BDCR_LSEON, fake_rcc.BDCR);
+	TEST_ASSERT_FALSE(RCC_lse_ready());
+}
+
+static void test_lse_stop_clears_lseon_and_ready_follows(void)
+{
+	RCC_lse_start(false);
+	fake_hw_step();
+	RCC_lse_stop();
+	TEST_ASSERT_BITS_LOW(RCC_BDCR_LSEON, fake_rcc.BDCR);
+	fake_hw_step();
+	TEST_ASSERT_FALSE(RCC_lse_ready());
+}
+
+static void test_lse_stop_unlocks_backup_domain_too(void)
+{
+	RCC_lse_stop(); /* DBP is still 0 after reset */
+	TEST_ASSERT_BITS_HIGH(PWR_CR_DBP, fake_pwr.CR);
+}
+
+static void test_low_speed_oscillators_do_not_touch_the_system_clock(void)
+{
+	const RCC_clock_config_t pll = cfg_pll_hsi_84();
+	RCC_TypeDef before;
+	FLASH_TypeDef flash_before;
+
+	TEST_ASSERT_EQUAL(RCC_OK, RCC_clock_init(&pll));
+	memcpy(&before, &fake_rcc, sizeof before);
+	memcpy(&flash_before, &fake_flash, sizeof flash_before);
+
+	TEST_ASSERT_EQUAL(RCC_OK, RCC_lsi_enable());
+	RCC_lse_start(false);
+	fake_hw_step();
+	RCC_lse_stop();
+	RCC_lsi_disable();
+
+	TEST_ASSERT_EQUAL_HEX32(before.CR, fake_rcc.CR);
+	TEST_ASSERT_EQUAL_HEX32(before.CFGR, fake_rcc.CFGR);
+	TEST_ASSERT_EQUAL_HEX32(before.PLLCFGR, fake_rcc.PLLCFGR);
+	TEST_ASSERT_EQUAL_MEMORY(&flash_before, &fake_flash,
+	                         sizeof flash_before);
+	TEST_ASSERT_EQUAL_UINT32(84000000U, RCC_get_sysclk_hz());
+}
+
 int main(void)
 {
 	UNITY_BEGIN();
@@ -571,5 +697,16 @@ int main(void)
 	RUN_TEST(test_mco1_all_valid_combinations);
 	RUN_TEST(test_mco1_keeps_other_cfgr_bits);
 	RUN_TEST(test_mco1_rejects_bad_values_and_changes_nothing);
+	RUN_TEST(test_lsi_enable_sets_lsion_and_reports_ready);
+	RUN_TEST(test_lsi_never_ready_times_out_and_switches_off);
+	RUN_TEST(test_lsi_disable_clears_lsion);
+	RUN_TEST(test_lse_start_unlocks_backup_domain_and_starts);
+	RUN_TEST(test_lse_start_bypass_sets_lsebyp);
+	RUN_TEST(test_lse_bypass_is_not_changed_while_running);
+	RUN_TEST(test_lse_ready_only_after_the_hardware_reports_it);
+	RUN_TEST(test_lse_dead_crystal_never_becomes_ready);
+	RUN_TEST(test_lse_stop_clears_lseon_and_ready_follows);
+	RUN_TEST(test_lse_stop_unlocks_backup_domain_too);
+	RUN_TEST(test_low_speed_oscillators_do_not_touch_the_system_clock);
 	return UNITY_END();
 }
