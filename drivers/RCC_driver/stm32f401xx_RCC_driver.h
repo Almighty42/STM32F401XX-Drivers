@@ -1,7 +1,6 @@
 #ifndef STM32F401XX_RCC_DRIVER_H
 #define STM32F401XX_RCC_DRIVER_H
 
-#include "stm32f401xx.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -30,15 +29,15 @@
 
 /** System clock source. */
 typedef enum {
-    RCC_SYSCLK_HSI, /**< Internal 16 MHz oscillator. */
-    RCC_SYSCLK_HSE, /**< External oscillator or bypass clock. */
-    RCC_SYSCLK_PLL  /**< Main PLL output. */
+    RCC_SYSCLK_HSI = 0, /**< Internal 16 MHz oscillator. */
+    RCC_SYSCLK_HSE = 1, /**< External oscillator or bypass clock. */
+    RCC_SYSCLK_PLL = 2  /**< Main PLL output. */
 } RCC_sysclk_src_t;
 
 /** PLL input clock. */
 typedef enum {
-    RCC_PLL_SRC_HSI, /**< HSI. */
-    RCC_PLL_SRC_HSE  /**< HSE. */
+    RCC_PLL_SRC_HSI = 0, /**< HSI. */
+    RCC_PLL_SRC_HSE = 1  /**< HSE. */
 } RCC_pll_src_t;
 
 /** AHB prescaler. Values equal the HPRE register encoding. */
@@ -103,7 +102,7 @@ typedef struct {
 /** Complete clock configuration. */
 typedef struct {
     RCC_sysclk_src_t sysclk;      /**< Source of SYSCLK. */
-    RCC_pll_config_t pll;         /**< Read only when sysclk is ::RCC_SYSCLK_PLL or the PLL is fed. */
+    RCC_pll_config_t pll;         /**< Read only when sysclk is ::RCC_SYSCLK_PLL */
     uint32_t         hse_hz;      /**< HSE frequency in Hz; 0 when HSE is unused. */
     bool             hse_bypass;  /**< true if HSE is an external clock, not a crystal. */
     RCC_ahb_div_t    ahb_div;     /**< AHB prescaler. */
@@ -118,8 +117,6 @@ typedef struct {
  * states and caches, bus dividers to maximum, oscillator, PLL, switch,
  * final dividers, final wait states. Waits are bounded by a loop count,
  * not by time.
- * @note SYSCLK is either unchanged or HSI on failure (HSI only when the PLL
- *       was in use). Dividers are restored; flash wait states may stay high.
  * @pre  Not called from an ISR.
  *
  * @param[in] cfg  Configuration. Not modified.
@@ -130,7 +127,10 @@ typedef struct {
  * @retval RCC_ERR_FREQ_LIMIT        A resulting frequency exceeds its limit.
  * @retval RCC_ERR_INVALID_SOURCE    The chosen source cannot be used.
  * @retval RCC_ERR_TIMEOUT           Something did not become ready in time.
- * @note A failed call leaves the previous clock running.
+ * @note A failed call leaves the previous clock running. SYSCLK is either 
+ * unchanged or HSI on failure (HSI only when the PLL was in use). 
+ * Dividers are restored; flash wait states may stay high.
+
  * @warning Peripherals that derive timing from the clock (SysTick, UART
  *          baud rate, timers) must be reconfigured afterwards.
  */
@@ -150,14 +150,15 @@ uint32_t RCC_get_pclk2_hz(void);
 
 /**
  * @brief Route a clock to the MCO1 pin (PA8).
- * @note The selected source must already be running. 
- * Divide the output (e.g. ::RCC_MCO_DIV_5) at high frequencies: the pin cannot output 84 MHz cleanly.
  * @param[in] src  Clock to output.
  * @param[in] div  Output divider.
  * @retval RCC_OK                    Success.
  * @retval RCC_ERR_INVALID_SOURCE    @p src is not an enum value.
  * @retval RCC_ERR_INVALID_PRESCALER @p div is not an enum value.
  * @note The caller configures PA8 as alternate function 0 with the GPIO driver.
+ * The selected source must already be running. 
+ * Divide the output (e.g. ::RCC_MCO_DIV_5) at high frequencies: the pin cannot output 84 MHz cleanly.
+
  */
 RCC_status_t RCC_mco1_config(RCC_mco1_src_t src, RCC_mco_div_t div);
 
