@@ -39,6 +39,15 @@ $(BUILD)/test_systick: systick/test_systick.c \
 $(BUILD)/test_systick: CFLAGS += -I$(ROOT)/drivers/SYSTICK_driver \
                              -DREG_POLL_HOOK=fake_hw_step
 
+TESTS += systime
+$(BUILD)/test_systime: systime/test_systime.c \
+                       $(ROOT)/drivers/SYSTIME_driver/stm32f401xx_SYSTIME_driver.c \
+                       $(ROOT)/drivers/SYSTICK_driver/stm32f401xx_SYSTICK_driver.c
+$(BUILD)/test_systime: CFLAGS += -I$(ROOT)/drivers/SYSTIME_driver \
+                                 -I$(ROOT)/drivers/SYSTICK_driver \
+                                 -DSYSTIME_IDLE_HOOK=fake_idle \
+                                 -DSYSTIME_TESTING
+
 # ---- Rules (no need to edit below when adding a test) -----------------------
 
 TEST_BINS = $(addprefix $(BUILD)/test_,$(TESTS))

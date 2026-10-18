@@ -5,3 +5,6 @@
 -mthumb
 -Igeneric
 -Idrivers/GPIO_driver
+-Idrivers/RCC_driver
+-Idrivers/SYSTICK_driver
+-Idrivers/SYSTIME_driver

@@ -39,6 +39,7 @@ typedef struct {
  * @param[in] core_hz  HCLK in Hz.
  * @retval SYSTIME_OK            Success.
  * @retval SYSTIME_ERR_TICK_RATE SysTick refused the rate.
+ * @note A re-init can lose up to one tick.
  * @warning Call again after every clock change. The counter keeps its value.
  */
 SYSTIME_status_t SYSTIME_init(uint32_t core_hz);
@@ -52,6 +53,8 @@ uint32_t SYSTIME_ms(void);
 /**
  * @brief Milliseconds elapsed since @p start_ms, wrap-safe.
  * @param[in] start_ms  A value earlier returned by ::SYSTIME_ms.
+ *
+ * @pre start_ms was returned by ::SYSTIME_ms earlier. A start in the future gives a huge elapsed value.
  */
 uint32_t SYSTIME_since(uint32_t start_ms);
 
@@ -59,6 +62,9 @@ uint32_t SYSTIME_since(uint32_t start_ms);
  * @brief Test whether @p timeout_ms has passed since @p start_ms.
  * @param[in] start_ms    A value earlier returned by ::SYSTIME_ms.
  * @param[in] timeout_ms  Timeout in ms.
+ *
+ * @pre start_ms was returned by ::SYSTIME_ms earlier. A start in the future gives a huge elapsed value.
+ *
  * @return true once at least @p timeout_ms have elapsed.
  */
 bool SYSTIME_elapsed(uint32_t start_ms, uint32_t timeout_ms);
@@ -68,14 +74,19 @@ bool SYSTIME_elapsed(uint32_t start_ms, uint32_t timeout_ms);
  *
  * Waits one extra tick so the delay is never shorter than requested.
  *
+ * @pre ::SYSTIME_init returned ::SYSTIME_OK. Before that the tick does not
+ *      run, and this call never returns.
  * @param[in] ms  Delay in ms.
  * @warning Never call from the SysTick interrupt or from an interrupt of
  *          equal or higher priority: the tick cannot advance there.
+ * @warning Interrupts must be enabled: with them disabled the tick
+ *          never advances and the call never returns.
  */
 void SYSTIME_delay_ms(uint32_t ms);
 
 /**
  * @brief Start a periodic timer.
+ * @pre period_ms is below 2^31 (about 24.8 days).
  * @param[out] t          Timer to initialise.
  * @param[in]  period_ms  Period in ms.
  */
@@ -85,7 +96,9 @@ void SYSTIME_timer_start(SYSTIME_timer_t *t, uint32_t period_ms);
  * @brief Test and advance a periodic timer.
  *
  * Moves the next expiry forward by exactly one period when it fires, so the
- * average rate does not drift.
+ * average rate does not drift. If the timer is polled several periods late,
+ * it returns true on consecutive calls until it has caught up. A period of 0
+ * returns true on every call.
  *
  * @param[in,out] t  Timer started with ::SYSTIME_timer_start.
  * @return true once per period.
