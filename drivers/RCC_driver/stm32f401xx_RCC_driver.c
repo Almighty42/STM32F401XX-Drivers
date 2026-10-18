@@ -85,10 +85,14 @@ static uint32_t rcc_apb_div_value(RCC_apb_div_t d)
 	}
 }
 
-/** VCO frequency: source / m * n, computed in 64 bits to avoid overflow. */
+/** VCO frequency: source / m * n, exact, in 32-bit arithmetic.
+ *
+ * Splits src_hz = q * m + r, so src_hz * n / m = q * n + r * n / m (rounded
+ * down, identical to the 64-bit version). q * n must fit in 32 bits: the
+ * 1-2 MHz VCO input check in rcc_pll_output guarantees it. */
 static uint32_t rcc_pll_vco_hz(uint32_t src_hz, uint32_t m, uint32_t n)
 {
-	return (uint32_t)((uint64_t)src_hz * n / m);
+	return (src_hz / m) * n + ((src_hz % m) * n) / m;
 }
 
 static RCC_status_t rcc_pll_output(const RCC_pll_config_t* pll, uint32_t src_hz,
@@ -201,7 +205,7 @@ static uint32_t rcc_pll_hz_from_regs(void)
 	                            ? rcc_hse_hz
 	                            : RCC_HSI_HZ;
 
-	if (m < RCC_PLLM_MIN) {
+	if (m < RCC_PLLM_MIN || n == 0U || (src_hz / m) > UINT32_MAX / n) {
 		return 0U; /* not a valid PLL setting: report "unknown" */
 	}
 	return rcc_pll_vco_hz(src_hz, m, n) / p;
