@@ -150,13 +150,13 @@
 
 // NOTE: --- Core Peripheral TypeDefs ---
 
-typedef struct
-{
-	__IO uint32_t CTRL;
-	__IO uint32_t LOAD;
-	__IO uint32_t VAL;
-	__IO uint32_t CALIB;
-} SysTick_Type;
+// typedef struct
+// {
+// 	__IO uint32_t CTRL;
+// 	__IO uint32_t LOAD;
+// 	__IO uint32_t VAL;
+// 	__IO uint32_t CALIB;
+// } SysTick_Type;
 
 typedef struct
 {
@@ -197,6 +197,16 @@ typedef struct
 
 } SCB_Type;
 #define SCB ((SCB_Type*)0xE000ED00)
+
+// #define SysTick ((SysTick_Type*)SYSTICK_BASE_ADDR)
+
+typedef struct {
+	__IO uint32_t CTRL;
+	__IO uint32_t LOAD;
+	__IO uint32_t VAL;
+	__IO uint32_t CALIB;
+} SYSTICK_TypeDef;
+#define SYSTICK ((SYSTICK_TypeDef*)SYSTICK_BASE_ADDR)
 
 typedef struct
 {

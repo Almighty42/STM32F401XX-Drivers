@@ -24,7 +24,7 @@
 /** Result of a SysTick driver call. 0 means success; all errors are non-zero. */
 typedef enum {
     SYSTICK_OK               = 0, /**< Success. */
-    SYSTICK_ERR_INVALID_RATE = 1, /**< core_hz or tick_hz is zero, or tick_hz above core_hz. */
+    SYSTICK_ERR_INVALID_RATE = 1, /**< core_hz or tick_hz is zero, or tick_hz above core_hz / 2. */
     SYSTICK_ERR_RELOAD_RANGE = 2  /**< Needed reload value does not fit in 24 bits. */
 } SYSTICK_status_t;
 
@@ -43,9 +43,11 @@ typedef void (*SYSTICK_callback_t)(void *ctx);
  * @param[in] core_hz  HCLK in Hz, for example from ::RCC_get_hclk_hz.
  * @param[in] tick_hz  Wanted tick rate in Hz, for example 1000.
  * @retval SYSTICK_OK               Success.
- * @retval SYSTICK_ERR_INVALID_RATE A rate is zero, or tick_hz exceeds core_hz.
+ * @retval SYSTICK_ERR_INVALID_RATE A rate is zero, or tick_hz exceeds core_hz / 2.
  * @retval SYSTICK_ERR_RELOAD_RANGE The reload value does not fit in 24 bits.
  * @note A failed call leaves SysTick unchanged.
+ * The real rate is core_hz / (core_hz / tick_hz): exact only when
+ * tick_hz divides core_hz.
  * @warning Call again after every clock change.
  */
 SYSTICK_status_t SYSTICK_init(uint32_t core_hz, uint32_t tick_hz);

@@ -33,6 +33,12 @@ $(BUILD)/test_rcc: rcc/test_rcc.c \
 $(BUILD)/test_rcc: CFLAGS += -I$(ROOT)/drivers/RCC_driver \
                              -DREG_POLL_HOOK=fake_hw_step
 
+TESTS += systick
+$(BUILD)/test_systick: systick/test_systick.c \
+                   $(ROOT)/drivers/SYSTICK_driver/stm32f401xx_SYSTICK_driver.c
+$(BUILD)/test_systick: CFLAGS += -I$(ROOT)/drivers/SYSTICK_driver \
+                             -DREG_POLL_HOOK=fake_hw_step
+
 # ---- Rules (no need to edit below when adding a test) -----------------------
 
 TEST_BINS = $(addprefix $(BUILD)/test_,$(TESTS))
