@@ -43,6 +43,37 @@ Build and flashing commands are in each example's README.
 intentional: the GPIO driver owns EXTI configuration and dispatch, while the
 application owns NVIC configuration and the vector handler.
 
+## API
+
+| Function | Purpose |
+|---|---|
+| `GPIO_init(port, cfg)` | Configure one or more pins: mode, output type, speed, pull, alternate function and an optional EXTI trigger. |
+| `GPIO_set(port, pins)` | Drive pins high through `BSRR`. |
+| `GPIO_reset(port, pins)` | Drive pins low through `BSRR`. |
+| `GPIO_toggle(port, pins)` | Invert pins. |
+| `GPIO_write(port, mask, value)` | Masked write: change only the pins in `mask`. |
+| `GPIO_read_pin(port, pin)` | Read one pin. |
+| `GPIO_read_port(port)` | Read the whole port. |
+| `GPIO_pin_deinit(port, pins)` | Return pins to their reset state. |
+| `GPIO_port_deinit(port)` | Reset every pin on the port. |
+| `GPIO_lock_pins(port, pins)` | Lock the pin configuration until the next reset. |
+| `GPIO_exti_set_callback(pin, cb, ctx)` | Register a callback for one EXTI line. |
+| `GPIO_exti_irq_handler(first, last)` | Call from the ISR with the range of lines it covers. |
+
+### Status codes
+
+`GPIO_OK` is 0. Every error is non-zero.
+
+| Code | Meaning |
+|---|---|
+| `GPIO_ERR_NULL_PTR` | A required pointer was NULL. |
+| `GPIO_ERR_INVALID_PORT` | `port` is not a valid GPIO port. |
+| `GPIO_ERR_INVALID_*` | A field of `cfg` is out of range. |
+| `GPIO_ERR_INVALID_TRIGGER` | The trigger is not usable with this configuration. |
+| `GPIO_ERR_EXTI_NOT_SINGLE` | A trigger was requested for a mask with more than one pin. |
+| `GPIO_ERR_EXTI_LINE_BUSY` | Another port already owns that EXTI line. |
+| `GPIO_ERR_PIN_LOCKED` | At least one selected pin is locked. |
+
 ## How it works
 
 ### What `GPIO_init` does
