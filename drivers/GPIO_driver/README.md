@@ -12,7 +12,7 @@ GPIO and EXTI driver for the STM32F401xD/xE, tested on the NUCLEO-F401RE.
 - Configuration lock (`GPIO_lock_pins`).
 - Every call that can fail returns a `GPIO_status_t`.
 
-## Example
+## Driver usage examples
 
 ```c
 const GPIO_config_t led = {.pins = GPIO_PIN_5, .mode = GPIO_MODE_OUTPUT,
@@ -28,7 +28,20 @@ NVIC->ISER[IRQ_NO_EXTI15_10 / 32U] = 1U << (IRQ_NO_EXTI15_10 % 32U);
 void EXTI15_10_IRQHandler(void) { GPIO_exti_irq_handler(10, 15); }
 ```
 
-Examples of how to use the driver are in `examples/button_blink`.
+## Code examples
+
+Both examples target the NUCLEO-F401RE and use its onboard LD2 LED on PA5.
+Build and flashing commands are in each example's README.
+
+| Example | Demonstrates | Hardware |
+|---|---|---|
+| [`basic_blink`](../../examples/gpio/basic_blink) | Output configuration and `GPIO_toggle` | LD2 / PA5 |
+| [`button_blink`](../../examples/gpio/button_blink) | Input configuration, EXTI callback and interrupt handling | B1 / PC13, LD2 / PA5 |
+
+`button_blink` enables `EXTI15_10_IRQn` in the application and calls
+`GPIO_exti_irq_handler(10, 15)` from `EXTI15_10_IRQHandler`. This is
+intentional: the GPIO driver owns EXTI configuration and dispatch, while the
+application owns NVIC configuration and the vector handler.
 
 ## How it works
 
