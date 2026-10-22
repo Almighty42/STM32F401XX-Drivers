@@ -33,35 +33,104 @@ C compiler, and OpenOCD for flashing.
 
 ```
 STM32F401XX-Drivers/
-├── drivers/ # One folder per peripheral
-│ ├── GPIO_driver/ # GPIO and EXTI (README, header, source, regs)
-│ ├── I2C_driver/
-│ ├── RCC_driver/ # Clock tree, PLL, MCO, LSI/LSE
-│ ├── SPI_driver/
-│ ├── SYSTICK_driver/ # Core tick timer
-│ ├── SYSTIME_driver/ # Millisecond time base on top of SysTick
-│ └── USART_driver/
-├── generic/ # Shared by every driver
-│ ├── stm32f401xx.h # Register structs and base addresses
-│ ├── reg_utils.h # Bit and field helpers
-│ ├── startup.c # Vector table and reset handler
-│ └── stm32_ls.ld # Linker script
-├── examples/ # Runnable programs for the Nucleo, by driver
-│ ├── clock/ # mco_out, lse_mco
-│ ├── gpio/ # basic_blink, button_blink
-│ ├── systick/ # tick_blink
-│ └── systime/ # delay_blink, timeout_poll
-├── test/ # Unity host tests with a fake register model
-├── mk/ # Shared makefile for the examples
-├── third_party/ # Unity (git submodule)
-├── docs/ # Extra notes (Doxygen output is generated)
-├── .github/ # CI workflows
+├── drivers/
+│   ├── GPIO_driver/                  # GPIO and EXTI
+│   │   ├── README.md                 # API, example, limits
+│   │   ├── stm32f401xx_GPIO_driver.c
+│   │   ├── stm32f401xx_GPIO_driver.h # Public API and limits
+│   │   └── stm32f401xx_GPIO_regs.h   # Private register encodings
+│   ├── I2C_driver/
+│   ├── RCC_driver/                   # Clock tree, PLL, MCO, LSI/LSE
+│   ├── SPI_driver/
+│   ├── SYSTICK_driver/               # Core tick timer with callback
+│   ├── SYSTIME_driver/               # Millisecond time base, delays, timeouts
+│   └── USART_driver/                 # Polling, interrupt, ring buffer
+├── generic/                          # Shared by every driver
+│   ├── reg_utils.h                   # Bit and field helpers
+│   ├── startup.c                     # Vector table and reset handler
+│   ├── stm32f401xx.h                 # Register structs and base addresses
+│   └── stm32_ls.ld                   # Linker script
+├── examples/                         # Runnable programs
+│   ├── clock/
+│   │   ├── lse_mco/                  # 32.768 kHz LSE on PA8
+│   │   └── mco_out/                  # 84 MHz PLL, 16.8 MHz on PA8
+│   ├── gpio/
+│   │   ├── basic_blink/              # LED on PA5
+│   │   └── button_blink/             # Button on PC13 through EXTI
+│   ├── systick/
+│   │   └── tick_blink/               # 1 kHz tick with a callback
+│   └── systime/
+│       ├── delay_blink/              # Blocking delay at 84 MHz
+│       └── timeout_poll/             # Debounced button, non-blocking timer
+├── test/                             # Unity host tests, fake register model
+├── mk/                               # Shared makefile for the examples
+├── third_party/                      # Unity (git submodule)
+├── docs/                             # Extra notes
+├── .github/                          # CI workflows
 ├── Doxyfile
-├── Makefile # test, examples, check
 ├── LICENSE
+├── Makefile                          # test, examples, check
 └── README.md
 ```
 
+## Driver diagram
+
+```mermaid
+flowchart TD
+    subgraph APP["Application"]
+        MAIN["main.c<br/> user code"]
+    end
+
+    subgraph EXS["Examples"]
+        EXAMPLES["examples/"]
+        EX_CLK["clock/"]
+        EX_GPIO["gpio/"]
+        EX_TICK["systick/"]
+        EX_TIME["systime/"]
+        EXAMPLES --> EX_CLK
+        EXAMPLES --> EX_GPIO
+        EXAMPLES --> EX_TICK
+        EXAMPLES --> EX_TIME
+    end
+
+    subgraph DRV["Drivers"]
+        direction TB
+
+        subgraph UTIL["Utility drivers"]
+            SYSTIME["SysTime"]
+        end
+
+        subgraph PERIPH["Peripheral drivers"]
+            GPIO["GPIO + EXTI"]
+            TIM["Timers (planned)"]
+            PWM["PWM (planned)"]
+            USART["USART"]
+            SPI["SPI"]
+            I2C["I2C"]
+            GPIO ~~~ TIM ~~~ PWM ~~~ USART ~~~ SPI ~~~ I2C
+        end
+
+        subgraph SYS["System drivers"]
+            RCC["RCC"]
+            TICK["SysTick"]
+        end
+
+        SYSTIME --> TICK
+    end
+
+    subgraph DEV["Device support"]
+        HDR["Register header"]
+        HELPERS["reg_utils.h"]
+        BOOT["Startup + linker script"]
+    end
+
+    MAIN --> EXS
+    EXS --> DRV
+    DRV --> DEV
+
+    classDef planned stroke-dasharray: 5 5,color:#888
+    class TIM,PWM planned
+```
 
 ## Examples
 
