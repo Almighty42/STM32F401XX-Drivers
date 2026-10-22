@@ -1,7 +1,20 @@
 # STM32F401XX-Drivers
 
+[![ci](https://github.com/Almighty42/STM32F401XX-Drivers/actions/workflows/ci.yml/badge.svg)](https://github.com/Almighty42/STM32F401XX-Drivers/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Almighty42/STM32F401XX-Drivers?display_name=tag&label=release)](https://github.com/Almighty42/STM32F401XX-Drivers/releases)
+[![License](https://img.shields.io/github/license/Almighty42/STM32F401XX-Drivers)](LICENSE)
+![Target](https://img.shields.io/badge/target-STM32F401RE-blue)
+
 Bare-metal C drivers for the STM32F401XX ( tested on F401RE ), without HAL or CMSIS drivers. 
 Every driver builds on the host against a fake register model, so the logic is unit-tested without a board.
+
+<p align="center">
+  <a href="#drivers">Drivers</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#examples">Examples</a> ·
+  <a href="#conventions">Conventions</a> ·
+  <a href="https://github.com/Almighty42/STM32F401XX-Drivers/releases">Releases</a>
+</p>
 
 ## Drivers
 
@@ -20,7 +33,7 @@ Each driver has its own folder with a public header, source, and a README with t
 ## Quick start
 
 ```sh
-git clone --recurse-submodules [https://github.com/Almighty42/STM32F401XX-Drivers](https://github.com/Almighty42/STM32F401XX-Drivers)
+git clone https://github.com/Almighty42/STM32F401XX-Drivers.git
 cd STM32F401XX-Drivers
 make test                 # host unit tests, no board needed
 make examples             # cross-build all examples
